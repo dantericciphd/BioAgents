@@ -19,9 +19,17 @@ xcode-select --install
 ## 1. Toolchain
 
 ```bash
-brew install bun supabase/tap/supabase docker miniforge mamba git jq
-# Use Node 23.3.0 (BioAgents pins this)
-brew install fnm && fnm install 23.3.0 && fnm use 23.3.0
+# bun lives in its own tap
+brew install oven-sh/bun/bun
+
+# Other tools
+brew install supabase/tap/supabase docker miniforge mamba git jq fnm
+
+# Wire fnm into zsh, then install Node 23.3.0
+echo 'eval "$(fnm env --use-on-cd --shell zsh)"' >> ~/.zshrc
+exec zsh
+fnm install 23.3.0 && fnm use 23.3.0 && fnm default 23.3.0
+node --version   # should print v23.3.0
 ```
 
 Start Docker Desktop once so its daemon is running (required for both
