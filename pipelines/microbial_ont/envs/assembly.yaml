@@ -1,0 +1,4 @@
+name: bioagents-assembly
+channels: [bioconda, conda-forge]
+dependencies:
+  - flye=2.9.5

@@ -1,0 +1,5 @@
+name: bioagents-qc
+channels: [bioconda, conda-forge]
+dependencies:
+  - nanoplot=1.42
+  - filtlong=0.2.1

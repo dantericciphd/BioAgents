@@ -1,0 +1,4 @@
+name: bioagents-sourmash
+channels: [bioconda, conda-forge]
+dependencies:
+  - sourmash=4.8.11

@@ -1,0 +1,4 @@
+name: bioagents-mefinder
+channels: [bioconda, conda-forge]
+dependencies:
+  - mefinder=1.0.5

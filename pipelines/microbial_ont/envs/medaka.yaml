@@ -1,0 +1,10 @@
+name: bioagents-medaka
+channels: [bioconda, conda-forge]
+dependencies:
+  # Medaka on Apple Silicon: install via pip in the env to get arm64 wheels.
+  - python=3.10
+  - pip
+  - samtools=1.21
+  - minimap2=2.28
+  - pip:
+    - medaka==2.0.1

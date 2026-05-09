@@ -1,0 +1,4 @@
+name: bioagents-islandpath
+channels: [bioconda, conda-forge]
+dependencies:
+  - islandpath=1.0.6

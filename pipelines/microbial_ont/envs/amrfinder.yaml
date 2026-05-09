@@ -1,0 +1,4 @@
+name: bioagents-amrfinder
+channels: [bioconda, conda-forge]
+dependencies:
+  - ncbi-amrfinderplus=4.0.3

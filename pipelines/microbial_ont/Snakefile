@@ -1,0 +1,361 @@
+# =============================================================================
+# microbial_ont — bacterial isolate ONT assembly + characterization
+# =============================================================================
+# Designed for laptops: 16 GB RAM, <200 GB disk. Uses light reference DBs.
+#
+# Inputs:
+#   config["samples"]      — { sample_id: { reads: path/to/reads.fastq.gz } }
+#   config["outdir"]       — base output dir
+#   config["threads"]      — default per-rule threads
+#   config["genome_size"]  — Flye genome size hint, e.g. "5m"
+#   config["dbs"]          — paths to reference DBs (see config.yaml)
+#
+# Top-level target: report.json per sample, plus an aggregated report.html.
+# =============================================================================
+
+from pathlib import Path
+import os
+
+OUTDIR  = Path(config["outdir"])
+SAMPLES = list(config["samples"].keys())
+THREADS = int(config.get("threads", 8))
+GSIZE   = config.get("genome_size", "5m")
+DBS     = config["dbs"]
+
+def reads(wc):
+    return config["samples"][wc.sample]["reads"]
+
+rule all:
+    input:
+        expand(str(OUTDIR / "{sample}" / "report.json"), sample=SAMPLES),
+        expand(str(OUTDIR / "{sample}" / "report.md"),   sample=SAMPLES),
+
+# ----------------------------------------------------------------------------- 
+# 1. QC: NanoPlot pre-filter + Filtlong filter + NanoPlot post-filter
+# -----------------------------------------------------------------------------
+rule nanoplot_raw:
+    input: reads
+    output:
+        stats = OUTDIR / "{sample}" / "qc" / "raw" / "NanoStats.txt",
+        flag  = touch(OUTDIR / "{sample}" / "qc" / "raw" / ".done"),
+    params: outdir = lambda wc: OUTDIR / wc.sample / "qc" / "raw"
+    threads: THREADS
+    conda: "envs/qc.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "nanoplot_raw.log"
+    shell:
+        "NanoPlot --threads {threads} --fastq {input} -o {params.outdir} "
+        "--no_static --tsv_stats &> {log}"
+
+rule filtlong:
+    input: reads
+    output: OUTDIR / "{sample}" / "qc" / "filtered.fastq.gz"
+    params:
+        min_len  = 1000,
+        min_qual = 90,   # filtlong's 0-100 quality scale
+    threads: THREADS
+    conda: "envs/qc.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "filtlong.log"
+    shell:
+        "filtlong --min_length {params.min_len} --min_mean_q {params.min_qual} "
+        "{input} 2> {log} | gzip > {output}"
+
+rule nanoplot_filtered:
+    input: rules.filtlong.output
+    output:
+        stats = OUTDIR / "{sample}" / "qc" / "filtered" / "NanoStats.txt",
+        flag  = touch(OUTDIR / "{sample}" / "qc" / "filtered" / ".done"),
+    params: outdir = lambda wc: OUTDIR / wc.sample / "qc" / "filtered"
+    threads: THREADS
+    conda: "envs/qc.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "nanoplot_filtered.log"
+    shell:
+        "NanoPlot --threads {threads} --fastq {input} -o {params.outdir} "
+        "--no_static --tsv_stats &> {log}"
+
+# ----------------------------------------------------------------------------- 
+# 2. Assembly: Flye (--nano-hq) + Medaka polish
+# -----------------------------------------------------------------------------
+rule flye:
+    input:  rules.filtlong.output
+    output:
+        asm = OUTDIR / "{sample}" / "assembly" / "flye" / "assembly.fasta",
+        gfa = OUTDIR / "{sample}" / "assembly" / "flye" / "assembly_graph.gfa",
+        info= OUTDIR / "{sample}" / "assembly" / "flye" / "assembly_info.txt",
+    params:
+        outdir     = lambda wc: OUTDIR / wc.sample / "assembly" / "flye",
+        genome_size= GSIZE,
+    threads: THREADS
+    resources: mem_mb = 12000
+    conda: "envs/assembly.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "flye.log"
+    shell:
+        "flye --nano-hq {input} --genome-size {params.genome_size} "
+        "--threads {threads} --out-dir {params.outdir} &> {log}"
+
+rule medaka:
+    input:
+        reads = rules.filtlong.output,
+        draft = rules.flye.output.asm,
+    output:
+        polished = OUTDIR / "{sample}" / "assembly" / "medaka" / "consensus.fasta",
+    params:
+        outdir = lambda wc: OUTDIR / wc.sample / "assembly" / "medaka",
+        model  = "r1041_e82_400bps_sup_v5.0.0",  # adjust to your basecaller
+    threads: THREADS
+    resources: mem_mb = 8000
+    conda: "envs/medaka.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "medaka.log"
+    shell:
+        "medaka_consensus -i {input.reads} -d {input.draft} -o {params.outdir} "
+        "-t {threads} -m {params.model} &> {log}"
+
+# ----------------------------------------------------------------------------- 
+# 3. Assembly QC: CheckM2 + QUAST
+# -----------------------------------------------------------------------------
+rule checkm2:
+    input: rules.medaka.output.polished
+    output:
+        report = OUTDIR / "{sample}" / "assembly_qc" / "checkm2" / "quality_report.tsv"
+    params:
+        outdir = lambda wc: OUTDIR / wc.sample / "assembly_qc" / "checkm2",
+        db     = DBS["checkm2"],
+        indir  = lambda wc, input: Path(input[0]).parent,
+    threads: THREADS
+    conda: "envs/checkm2.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "checkm2.log"
+    shell:
+        "checkm2 predict --threads {threads} --input {params.indir} "
+        "--output-directory {params.outdir} --database_path {params.db} "
+        "--extension fasta --force &> {log}"
+
+rule quast:
+    input: rules.medaka.output.polished
+    output: OUTDIR / "{sample}" / "assembly_qc" / "quast" / "report.tsv"
+    params: outdir = lambda wc: OUTDIR / wc.sample / "assembly_qc" / "quast"
+    threads: THREADS
+    conda: "envs/quast.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "quast.log"
+    shell:
+        "quast.py {input} -o {params.outdir} -t {threads} &> {log}"
+
+# ----------------------------------------------------------------------------- 
+# 4. Taxonomy & relatedness: sourmash gather (GTDB) + skani vs reps
+# -----------------------------------------------------------------------------
+rule sourmash_sketch:
+    input: rules.medaka.output.polished
+    output: OUTDIR / "{sample}" / "tax" / "sketch.sig"
+    threads: 1
+    conda: "envs/sourmash.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "sourmash_sketch.log"
+    shell:
+        "sourmash sketch dna -p k=31,scaled=1000,abund "
+        "{input} -o {output} --name {wildcards.sample} &> {log}"
+
+rule sourmash_gather:
+    input:
+        sig = rules.sourmash_sketch.output,
+        db  = DBS["gtdb_sourmash"],
+    output: OUTDIR / "{sample}" / "tax" / "gather.csv"
+    threads: 4
+    conda: "envs/sourmash.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "sourmash_gather.log"
+    shell:
+        "sourmash gather {input.sig} {input.db} -o {output} "
+        "--threshold-bp 50000 &> {log} || true"
+
+rule skani:
+    input:
+        asm = rules.medaka.output.polished,
+        db  = DBS["skani_gtdb"],
+    output: OUTDIR / "{sample}" / "tax" / "skani.tsv"
+    threads: THREADS
+    conda: "envs/skani.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "skani.log"
+    shell:
+        "skani search -d {input.db} -q {input.asm} -t {threads} "
+        "-o {output} &> {log}"
+
+# ----------------------------------------------------------------------------- 
+# 5. Annotation: Bakta (light DB)
+# -----------------------------------------------------------------------------
+rule bakta:
+    input:
+        asm = rules.medaka.output.polished,
+        db  = DBS["bakta_light"],
+    output:
+        gff = OUTDIR / "{sample}" / "annotation" / "{sample}.gff3",
+        faa = OUTDIR / "{sample}" / "annotation" / "{sample}.faa",
+        ffn = OUTDIR / "{sample}" / "annotation" / "{sample}.ffn",
+        tsv = OUTDIR / "{sample}" / "annotation" / "{sample}.tsv",
+    params:
+        outdir = lambda wc: OUTDIR / wc.sample / "annotation",
+        prefix = lambda wc: wc.sample,
+    threads: THREADS
+    conda: "envs/bakta.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "bakta.log"
+    shell:
+        "bakta --db {input.db} --output {params.outdir} --prefix {params.prefix} "
+        "--threads {threads} --skip-crispr --skip-plot --force {input.asm} &> {log}"
+
+# ----------------------------------------------------------------------------- 
+# 6. Safety signals: AMRFinderPlus, abricate (VFDB), MEFinder, plasmidfinder
+# -----------------------------------------------------------------------------
+rule amrfinder:
+    input:
+        asm = rules.medaka.output.polished,
+        faa = rules.bakta.output.faa,
+        gff = rules.bakta.output.gff,
+    output: OUTDIR / "{sample}" / "safety" / "amrfinder.tsv"
+    threads: THREADS
+    conda: "envs/amrfinder.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "amrfinder.log"
+    shell:
+        "amrfinder -n {input.asm} -p {input.faa} -g {input.gff} "
+        "--threads {threads} --plus -o {output} &> {log}"
+
+rule abricate_vfdb:
+    input: rules.medaka.output.polished
+    output: OUTDIR / "{sample}" / "safety" / "vfdb.tsv"
+    threads: THREADS
+    conda: "envs/abricate.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "abricate_vfdb.log"
+    shell:
+        "abricate --threads {threads} --db vfdb {input} > {output} 2> {log}"
+
+rule abricate_plasmid:
+    input: rules.medaka.output.polished
+    output: OUTDIR / "{sample}" / "safety" / "plasmidfinder.tsv"
+    threads: THREADS
+    conda: "envs/abricate.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "abricate_plasmid.log"
+    shell:
+        "abricate --threads {threads} --db plasmidfinder {input} > {output} 2> {log}"
+
+rule mefinder:
+    input: rules.medaka.output.polished
+    output: OUTDIR / "{sample}" / "safety" / "mefinder.csv"
+    params: prefix = lambda wc: OUTDIR / wc.sample / "safety" / "mefinder"
+    threads: THREADS
+    conda: "envs/mefinder.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "mefinder.log"
+    shell:
+        "mefinder find --contig {input} {params.prefix} -t {threads} &> {log} && "
+        "test -s {params.prefix}.csv && cp {params.prefix}.csv {output} || touch {output}"
+
+# Pathogenicity-island prediction: IslandPath-DIMOB (light, GFF-based).
+rule islandpath:
+    input: gff = rules.bakta.output.gff
+    output: OUTDIR / "{sample}" / "safety" / "islands.gff"
+    conda: "envs/islandpath.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "islandpath.log"
+    shell:
+        "Dimob.pl {input.gff} {output} &> {log} || touch {output}"
+
+# ----------------------------------------------------------------------------- 
+# 7. Metabolism: gapseq find / draft / fill
+# -----------------------------------------------------------------------------
+rule gapseq:
+    input: asm = rules.medaka.output.polished
+    output:
+        pathways = OUTDIR / "{sample}" / "metabolism" / "{sample}-Pathways.tbl",
+        rxns     = OUTDIR / "{sample}" / "metabolism" / "{sample}-Reactions.tbl",
+        sbml     = OUTDIR / "{sample}" / "metabolism" / "{sample}.xml",
+    params:
+        workdir = lambda wc: OUTDIR / wc.sample / "metabolism",
+        prefix  = lambda wc: wc.sample,
+    threads: THREADS
+    conda: "envs/gapseq.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "gapseq.log"
+    shell:
+        "set -eu; mkdir -p {params.workdir}; cd {params.workdir}; "
+        "gapseq doall ../../../{input.asm} &> ../../../{log} && "
+        "true"
+
+# ----------------------------------------------------------------------------- 
+# 8. Secondary metabolites: antiSMASH (Docker on Apple Silicon)
+# -----------------------------------------------------------------------------
+rule antismash:
+    input: rules.medaka.output.polished
+    output:
+        json = OUTDIR / "{sample}" / "smash" / "{sample}.json"
+    params:
+        outdir = lambda wc: OUTDIR / wc.sample / "smash",
+        image  = "antismash/standalone-lite:latest",
+    threads: THREADS
+    log: OUTDIR / "{sample}" / "logs" / "antismash.log"
+    shell:
+        "docker run --rm -v $(pwd):/data -w /data {params.image} "
+        "antismash --cpus {threads} --output-dir {params.outdir} "
+        "--genefinding-tool prodigal --minimal {input} &> {log}"
+
+# ----------------------------------------------------------------------------- 
+# 9. Targeted HMM scans: SCFA / bile acid / neurotransmitter genes
+# -----------------------------------------------------------------------------
+rule targeted_hmm:
+    input:
+        faa  = rules.bakta.output.faa,
+        hmms = DBS["targeted_hmms"],
+    output: OUTDIR / "{sample}" / "metabolism" / "targeted_hmm.tsv"
+    threads: THREADS
+    conda: "envs/hmmer.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "targeted_hmm.log"
+    shell:
+        "hmmsearch --cpu {threads} --tblout {output} "
+        "{input.hmms} {input.faa} > {log} 2>&1"
+
+# ----------------------------------------------------------------------------- 
+# 10. Aggregate report
+# -----------------------------------------------------------------------------
+rule report:
+    input:
+        nanoplot_raw      = rules.nanoplot_raw.output.stats,
+        nanoplot_filtered = rules.nanoplot_filtered.output.stats,
+        flye_info         = rules.flye.output.info,
+        polished          = rules.medaka.output.polished,
+        checkm2           = rules.checkm2.output.report,
+        quast             = rules.quast.output,
+        sourmash          = rules.sourmash_gather.output,
+        skani             = rules.skani.output,
+        bakta_tsv         = rules.bakta.output.tsv,
+        amrfinder         = rules.amrfinder.output,
+        vfdb              = rules.abricate_vfdb.output,
+        plasmid           = rules.abricate_plasmid.output,
+        mefinder          = rules.mefinder.output,
+        islands           = rules.islandpath.output,
+        gapseq_pathways   = rules.gapseq.output.pathways,
+        gapseq_rxns       = rules.gapseq.output.rxns,
+        sbml              = rules.gapseq.output.sbml,
+        antismash         = rules.antismash.output.json,
+        targeted          = rules.targeted_hmm.output,
+    output:
+        json = OUTDIR / "{sample}" / "report.json",
+        md   = OUTDIR / "{sample}" / "report.md",
+    params:
+        sample = lambda wc: wc.sample,
+    conda: "envs/report.yaml"
+    log: OUTDIR / "{sample}" / "logs" / "report.log"
+    shell:
+        "python scripts/build_report.py "
+        "--sample {params.sample} "
+        "--inputs '{{"
+            "\"nanoplot_raw\":\"{input.nanoplot_raw}\","
+            "\"nanoplot_filtered\":\"{input.nanoplot_filtered}\","
+            "\"flye_info\":\"{input.flye_info}\","
+            "\"polished\":\"{input.polished}\","
+            "\"checkm2\":\"{input.checkm2}\","
+            "\"quast\":\"{input.quast}\","
+            "\"sourmash\":\"{input.sourmash}\","
+            "\"skani\":\"{input.skani}\","
+            "\"bakta_tsv\":\"{input.bakta_tsv}\","
+            "\"amrfinder\":\"{input.amrfinder}\","
+            "\"vfdb\":\"{input.vfdb}\","
+            "\"plasmid\":\"{input.plasmid}\","
+            "\"mefinder\":\"{input.mefinder}\","
+            "\"islands\":\"{input.islands}\","
+            "\"gapseq_pathways\":\"{input.gapseq_pathways}\","
+            "\"gapseq_rxns\":\"{input.gapseq_rxns}\","
+            "\"sbml\":\"{input.sbml}\","
+            "\"antismash\":\"{input.antismash}\","
+            "\"targeted\":\"{input.targeted}\""
+        "}}' "
+        "--out-json {output.json} --out-md {output.md} &> {log}"

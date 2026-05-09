@@ -1,0 +1,4 @@
+name: bioagents-checkm2
+channels: [bioconda, conda-forge]
+dependencies:
+  - checkm2=1.0.2

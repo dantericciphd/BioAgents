@@ -1,0 +1,4 @@
+name: bioagents-gapseq
+channels: [bioconda, conda-forge]
+dependencies:
+  - gapseq=1.4.0

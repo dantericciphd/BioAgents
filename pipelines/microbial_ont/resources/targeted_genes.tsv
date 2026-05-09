@@ -1,0 +1,26 @@
+#category	gene	description	source_hint
+SCFA_acetate	ackA	acetate kinase	KEGG K00925 / TIGR00016
+SCFA_acetate	pta	phosphate acetyltransferase	KEGG K13788 / TIGR00651
+SCFA_butyrate	but	butyryl-CoA:acetate CoA-transferase	Vital et al. 2014 HMM
+SCFA_butyrate	buk	butyrate kinase	KEGG K00929 / TIGR02165
+SCFA_butyrate	bcd	butyryl-CoA dehydrogenase	KEGG K00248
+SCFA_butyrate	thlA	acetyl-CoA acetyltransferase (thiolase)	KEGG K00626
+SCFA_butyrate	hbd	3-hydroxybutyryl-CoA dehydrogenase	KEGG K00074
+SCFA_butyrate	crt	enoyl-CoA hydratase / crotonase	KEGG K01715
+SCFA_propionate_succ	mmdA	methylmalonyl-CoA decarboxylase	KEGG K11264
+SCFA_propionate_succ	mmcE	methylmalonyl-CoA epimerase	KEGG K05606
+SCFA_propionate_acrylate	lcdA	lactoyl-CoA dehydratase A	Reichardt et al. 2014
+SCFA_propionate_acrylate	pduP	propanediol oxidoreductase / 1,2-PD pathway	KEGG K13922
+SCFA_propionate_propanediol	pduCDE	propanediol dehydratase	KEGG K01699
+BileAcid_BSH	bsh	bile salt hydrolase / choloylglycine hydrolase	KEGG K01442 / Pfam PF02275
+BileAcid_bai	baiB	bile-acid CoA ligase	Ridlon et al. 2006
+BileAcid_bai	baiCD	7-alpha-hydroxy-3-oxo-Delta4-cholenoic acid oxidoreductase	Ridlon et al. 2006
+BileAcid_bai	baiE	bile-acid 7-alpha-dehydratase	Ridlon et al. 2006
+BileAcid_bai	baiA	3-alpha-hydroxysteroid dehydrogenase	Ridlon et al. 2006
+BileAcid_bai	baiH	7-beta-hydroxy-3-oxo-Delta4-cholenoic acid oxidoreductase	Ridlon et al. 2006
+Neuro_GABA	gadB	glutamate decarboxylase	KEGG K01580
+Neuro_GABA	gadC	glutamate/GABA antiporter	KEGG K20265
+Neuro_tryptamine	tdc	aromatic L-amino acid decarboxylase	Williams et al. 2014
+Neuro_indole	tnaA	tryptophanase	KEGG K01667
+Neuro_serotonin_pre	trpB	tryptophan synthase beta	KEGG K01696
+Neuro_dopamine_pre	tyrDC	tyrosine decarboxylase	KEGG K18933

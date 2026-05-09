@@ -1,0 +1,4 @@
+name: bioagents-abricate
+channels: [bioconda, conda-forge]
+dependencies:
+  - abricate=1.0.1

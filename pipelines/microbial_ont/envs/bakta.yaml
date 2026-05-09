@@ -1,0 +1,4 @@
+name: bioagents-bakta
+channels: [bioconda, conda-forge]
+dependencies:
+  - bakta=1.10.4

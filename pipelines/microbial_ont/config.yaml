@@ -1,0 +1,15 @@
+outdir: pipelines/microbial_ont/runs
+threads: 8
+genome_size: "5m"
+
+dbs:
+  checkm2:        ~/bioagents-dbs/checkm2/uniref100.KO.1.dmnd
+  bakta_light:    ~/bioagents-dbs/bakta-light/db-light
+  gtdb_sourmash:  ~/bioagents-dbs/sourmash/gtdb-rs220-k31.zip
+  skani_gtdb:     ~/bioagents-dbs/skani/gtdb_skani_db
+  targeted_hmms:  pipelines/microbial_ont/resources/targeted.hmm
+
+samples:
+  # Filled by the agent or by hand. Example:
+  # zymo_ecoli:
+  #   reads: /Users/dante/data/zymo_ecoli.fastq.gz
